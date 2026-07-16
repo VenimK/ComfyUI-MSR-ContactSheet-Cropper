@@ -1,0 +1,52 @@
+[project]
+name = "comfyui-msr-contactsheet-cropper"
+description = "Custom node for cropping MSR Contact Sheets into the 5 panels needed for Licon-MSR workflows"
+version = "1.0.0"
+license = {text = "MIT"}
+authors = [
+    {name = "VenimK"},
+]
+keywords = ["comfyui", "custom-node", "msr", "contact-sheet", "licon-msr", "ideogram", "image-cropping"]
+requires-python = ">=3.9"
+dependencies = [
+    "torch",
+    "numpy",
+    "pillow",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+[project.urls]
+Repository = "https://github.com/VenimK/ComfyUI-MSR-ContactSheet-Cropper"
+Issues = "https://github.com/VenimK/ComfyUI-MSR-ContactSheet-Cropper/issues"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
