@@ -7,6 +7,14 @@ lives in the `msr_nodes` package so the root file stays small and readable.
 from __future__ import annotations
 
 import logging
+import os
+import sys
+
+# Ensure sibling `msr_nodes` package is importable when ComfyUI loads this
+# custom node directly without putting the node folder on sys.path.
+_NODE_DIR = os.path.dirname(os.path.abspath(__file__))
+if _NODE_DIR not in sys.path:
+    sys.path.insert(0, _NODE_DIR)
 
 from msr_nodes.assembler import MSRContactSheetAssembler
 from msr_nodes.constants import (

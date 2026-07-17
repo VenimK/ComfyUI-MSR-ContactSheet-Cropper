@@ -44,6 +44,7 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+per-file-ignores = { "__init__.py" = ["E402"] }
 
 [tool.black]
 line-length = 100
