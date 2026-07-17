@@ -102,6 +102,14 @@ Examples:
 | `1,0,2,4,5` | Swap background and slot1 |
 | `0,1,2,3,4` | Custom layout: slot3 uses cell 3 (middle-left) |
 
+## Layout Preset Guide
+
+| Preset | Grid | Best For | Default Mapping |
+|--------|------|----------|-----------------|
+| `ideogram_3x3` | 3x3 | Ideogram contact sheets | `0,1,2,4,5` |
+| `midjourney_4x4` | 4x4 | Midjourney --tile / 4x4 sheets | `0,1,2,3,4` |
+| `custom_3x3` | 3x3 | Hand-built 3x3 sheets with a different slot order | `0,1,2,3,4` |
+
 ## Installation
 
 ### Method 1: ComfyUI Manager (Recommended)
