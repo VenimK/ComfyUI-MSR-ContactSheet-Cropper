@@ -11,6 +11,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from msr_nodes.constants import OVERLAY_COLORS
 
+try:
+    _RESAMPLE = Image.Resampling.LANCZOS
+except AttributeError:
+    _RESAMPLE = Image.LANCZOS
+
 if TYPE_CHECKING:
     from msr_nodes.types import PanelCoords
 
@@ -50,6 +55,23 @@ def crop_tensor(
 def make_mask(height: int, width: int, batch: int = 1) -> torch.Tensor:
     """Return a white mask tensor of shape (B, H, W)."""
     return torch.ones((batch, height, width), dtype=torch.float32)
+
+
+def resize_to_min_short_edge(pil_img: Image.Image, min_size: int) -> Image.Image:
+    """Resize a PIL image so its short edge is at least min_size, keeping aspect ratio.
+
+    If min_size is 0 or the image already meets the minimum, it is returned unchanged.
+    """
+    if min_size <= 0:
+        return pil_img
+    width, height = pil_img.size
+    short = min(width, height)
+    if short >= min_size:
+        return pil_img
+    scale = min_size / short
+    new_width = max(1, int(round(width * scale)))
+    new_height = max(1, int(round(height * scale)))
+    return pil_img.resize((new_width, new_height), _RESAMPLE)
 
 
 def get_overlay_font(size: int = 16) -> ImageFont.FreeTypeFont | None:

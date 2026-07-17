@@ -143,6 +143,7 @@ Restart ComfyUI.
 | `panel_mapping` | STRING | No | `"0,1,2,4,5"` | Comma-separated cell indices for panel assignment |
 | `grid_size` | INT | No | `1000` | Reference grid dimension (used when detect_grid is False) |
 | `filename_prefix` | STRING | No | `"msr"` | Prefix for saved filenames |
+| `target_size` | INT | No | `0` | Minimum short edge for output panels (0 = no resize) |
 | `output_directory` | STRING | No | `"msr_crops"` | Directory for saved files |
 | `subfolder_by_layout` | BOOLEAN | No | `False` | Create a subfolder per layout preset |
 | `include_timestamp` | BOOLEAN | No | `False` | Add timestamp subfolder to output path |
@@ -257,6 +258,9 @@ A: Yes. Pass a batch tensor (B > 1) to `contact_sheet`. Outputs are stacked alon
 
 **Q: What is `grid_size` for?**
 A: It's the reference size used when `detect_grid=False`. For a 1000x1000 Ideogram sheet, leave it at `1000`.
+
+**Q: My panels are only 458x256. Will they work for LTX2.3?**
+A: They will work, but 458x256 is small for video generation. Set `target_size=512` (or `768`) on the cropper to upscale the panels while keeping the aspect ratio. The masks are resized to match. This gives LTX2.3 a larger first frame to work with.
 
 **Q: Where are my files saved?**
 A: Next to the ComfyUI working directory by default, in `msr_crops/`. A `manifest.json` is written with each run's metadata.

@@ -410,6 +410,22 @@ class TestConvenienceFeatures:
         for name in PANEL_OUTPUT_NAMES:
             assert (layout_dir / f"msr_{name}.png").exists()
 
+    def test_target_size_upscales_panels(self, cropper, contact_sheet):
+        result = cropper.crop_panels(
+            contact_sheet,
+            save_to_disk=False,
+            target_size=512,
+        )
+        panel = result[0]  # background
+        mask = result[5]  # mask_bg
+        # Each panel is 333x333 from a 1000x1000 sheet, so target_size=512 should resize
+        short = min(panel.shape[1], panel.shape[2])
+        assert short >= 512, f"expected short edge >= 512, got {short}"
+        assert mask.shape[1:] == panel.shape[1:3]
+        status = result[11]
+        assert "target_size=512" in status
+        assert "resized=True" in status
+
 
 # --- Assembler ----------------------------------------------------------------
 

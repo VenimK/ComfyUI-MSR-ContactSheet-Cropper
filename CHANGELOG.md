@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-17
+
+### Added
+
+- New cropper input `target_size` to upscale small panels to a minimum short edge
+  while preserving aspect ratio. Masks are resized to match. Useful for feeding
+  LTX2.3 and other video/image models with higher-resolution first frames.
+- Status string reports `target_size` and `resized=True` when upscaling occurs.
+- Manifest now includes `target_size`.
+- README FAQ for the 458x256 / LTX2.3 case.
+
 ## [1.2.1] - 2026-07-17
 
 ### Fixed

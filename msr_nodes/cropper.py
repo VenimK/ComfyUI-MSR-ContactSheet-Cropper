@@ -22,6 +22,7 @@ from msr_nodes.image_utils import (
     draw_debug_overlay,
     make_mask,
     pil_to_tensor,
+    resize_to_min_short_edge,
     tensor_to_pil,
 )
 from msr_nodes.types import ComfyInputSpec
@@ -60,6 +61,17 @@ class MSRContactSheetCropper:
                     ),
                 ),
                 "filename_prefix": ("STRING", ComfyInputSpec({"default": "msr"})),
+                "target_size": (
+                    "INT",
+                    ComfyInputSpec(
+                        {
+                            "default": 0,
+                            "min": 0,
+                            "max": 4096,
+                            "step": 64,
+                        }
+                    ),
+                ),
                 "output_directory": ("STRING", ComfyInputSpec({"default": "msr_crops"})),
                 "subfolder_by_layout": ("BOOLEAN", ComfyInputSpec({"default": False})),
                 "include_timestamp": ("BOOLEAN", ComfyInputSpec({"default": False})),
@@ -108,6 +120,7 @@ class MSRContactSheetCropper:
         panel_mapping: str = "0,1,2,4,5",
         grid_size: int = DEFAULT_GRID_SIZE,
         filename_prefix: str = "msr",
+        target_size: int = 0,
         output_directory: str = "msr_crops",
         subfolder_by_layout: bool = False,
         include_timestamp: bool = False,
@@ -172,6 +185,7 @@ class MSRContactSheetCropper:
             all_panel_tensors: list[list[torch.Tensor]] = [[] for _ in PANEL_OUTPUT_NAMES]
             all_mask_tensors: list[list[torch.Tensor]] = [[] for _ in PANEL_OUTPUT_NAMES]
             overlay_tensors: list[torch.Tensor] = []
+            resized_any = False
 
             for batch_idx in range(batch_size):
                 img_tensor = contact_sheet[batch_idx : batch_idx + 1]
@@ -204,18 +218,24 @@ class MSRContactSheetCropper:
                         coords.bottom,
                         coords.right,
                     )
+
+                    pil_crop = tensor_to_pil(crop)
+                    pil_crop_resized = resize_to_min_short_edge(pil_crop, target_size)
+                    if pil_crop_resized.size != pil_crop.size:
+                        resized_any = True
+                    crop = pil_to_tensor(pil_crop_resized)
                     all_panel_tensors[panel_idx].append(crop)
 
                     mask = make_mask(
-                        coords.bottom - coords.top,
-                        coords.right - coords.left,
+                        pil_crop_resized.size[1],
+                        pil_crop_resized.size[0],
                         crop.shape[0],
                     )
                     all_mask_tensors[panel_idx].append(mask)
 
                     if save_to_disk:
                         self._save_panel(
-                            tensor_to_pil(crop),
+                            pil_crop_resized,
                             save_dir,
                             filename_prefix,
                             name,
@@ -270,6 +290,8 @@ class MSRContactSheetCropper:
                 save_dir=save_dir if save_to_disk else None,
                 saved_count=len(PANEL_OUTPUT_NAMES) * batch_size
                 + (len(backup_coords) * batch_size if save_backup_panels else 0),
+                target_size=target_size,
+                resized_any=resized_any,
                 warnings=warnings,
             )
 
@@ -285,6 +307,7 @@ class MSRContactSheetCropper:
                     grid_detect_status=grid_detect_status,
                     saved_count=len(PANEL_OUTPUT_NAMES) * batch_size
                     + (len(backup_coords) * batch_size if save_backup_panels else 0),
+                    target_size=target_size,
                 )
 
             logger.info("All panels processed: %s", status)
@@ -343,6 +366,8 @@ class MSRContactSheetCropper:
         grid_detect_status: str,
         save_dir: str | None,
         saved_count: int,
+        target_size: int,
+        resized_any: bool,
         warnings: list[str],
     ) -> str:
         """Build a concise, human-readable status string."""
@@ -360,6 +385,10 @@ class MSRContactSheetCropper:
             f"mapping={panel_mapping}",
             f"detect={grid_detect_status}",
         ]
+        if target_size > 0:
+            parts.append(f"target_size={target_size}")
+        if resized_any:
+            parts.append("resized=True")
         if save_dir:
             parts.append(f"dir={save_dir}")
         if warnings:
@@ -377,6 +406,7 @@ class MSRContactSheetCropper:
         panel_mapping: list[int],
         grid_detect_status: str,
         saved_count: int,
+        target_size: int,
     ) -> None:
         """Write a JSON manifest describing the crop run."""
         os.makedirs(output_folder, exist_ok=True)
@@ -388,6 +418,7 @@ class MSRContactSheetCropper:
             "panel_mapping": panel_mapping,
             "grid_detect_status": grid_detect_status,
             "saved_files": saved_count,
+            "target_size": target_size,
         }
         path = os.path.join(output_folder, "manifest.json")
         with open(path, "w", encoding="utf-8") as f:
