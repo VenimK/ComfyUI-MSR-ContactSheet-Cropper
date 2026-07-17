@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-msr-contactsheet-cropper"
 description = "ComfyUI custom nodes for cropping and assembling MSR Contact Sheets with auto-detection, layout presets, batch processing, masks, and debug overlays"
-version = "1.0.0"
+version = "1.1.0"
 license = {text = "MIT"}
 authors = [
     {name = "VenimK"},
@@ -30,6 +30,8 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/VenimK/ComfyUI-MSR-ContactSheet-Cropper"
+Documentation = "https://github.com/VenimK/ComfyUI-MSR-ContactSheet-Cropper#readme"
+Changelog = "https://github.com/VenimK/ComfyUI-MSR-ContactSheet-Cropper/blob/main/CHANGELOG.md"
 Issues = "https://github.com/VenimK/ComfyUI-MSR-ContactSheet-Cropper/issues"
 
 [build-system]

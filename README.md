@@ -257,9 +257,28 @@ A: Next to the ComfyUI working directory by default, in `msr_crops/`. A `manifes
 
 - Python >= 3.9
 - ComfyUI
-- torch
-- numpy
-- pillow
+- torch, numpy, pillow
+
+## Project Structure
+
+```
+ComfyUI-MSR-ContactSheet-Cropper/
+├── __init__.py              # ComfyUI registration shim
+├── msr_nodes/               # Core implementation package
+│   ├── constants.py         # Layout presets and shared constants
+│   ├── types.py             # Internal dataclasses (PanelCoords, GridSpec)
+│   ├── image_utils.py       # Tensor/PIL conversion, masks, debug overlay
+│   ├── grid.py              # Grid detection and panel mapping
+│   ├── cropper.py           # MSRContactSheetCropper node
+│   └── assembler.py         # MSRContactSheetAssembler node
+├── js/
+│   └── msr_nodes.js         # ComfyUI web extension for node colors
+├── tests/                   # pytest suite
+├── README.md
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+└── CODE_OF_CONDUCT.md
+```
 
 ## Development
 

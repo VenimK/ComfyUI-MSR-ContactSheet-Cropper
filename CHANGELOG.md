@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-17
+
+### Changed
+
+- Major refactor: split monolithic `__init__.py` into a proper `msr_nodes` package
+  (`constants`, `types`, `image_utils`, `grid`, `cropper`, `assembler`).
+- Added `PanelCoords` and `GridSpec` dataclasses for cleaner internal APIs.
+- Node categories split into `Licon-MSR / Crop` and `Licon-MSR / Assemble`.
+
+### Added
+
+- ComfyUI web extension (`js/msr_nodes.js`) that gives MSR nodes distinctive
+  default colors in the workflow graph.
+- `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+- PyPI-friendly project URLs (Documentation, Changelog, Issues).
+
 ## [1.1.0] - 2026-07-17
 
 ### Added
