@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-17
+
+### Fixed
+
+- Renamed cropper input `output_folder` → `output_directory` to match the plan.
+- Status string now reports `panels=5 | saved=N` and explicitly warns when grid
+  detection falls back to `grid_size`.
+- Panel mapping clamping is reported in `status` when indices are out of range.
+
 ## [1.2.0] - 2026-07-17
 
 ### Changed

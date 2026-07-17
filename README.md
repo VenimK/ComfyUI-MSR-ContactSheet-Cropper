@@ -135,7 +135,7 @@ Restart ComfyUI.
 | `panel_mapping` | STRING | No | `"0,1,2,4,5"` | Comma-separated cell indices for panel assignment |
 | `grid_size` | INT | No | `1000` | Reference grid dimension (used when detect_grid is False) |
 | `filename_prefix` | STRING | No | `"msr"` | Prefix for saved filenames |
-| `output_folder` | STRING | No | `"msr_crops"` | Directory for saved files |
+| `output_directory` | STRING | No | `"msr_crops"` | Directory for saved files |
 | `subfolder_by_layout` | BOOLEAN | No | `False` | Create a subfolder per layout preset |
 | `include_timestamp` | BOOLEAN | No | `False` | Add timestamp subfolder to output path |
 | `save_to_disk` | BOOLEAN | No | `True` | Whether to persist crops to disk |
@@ -237,7 +237,7 @@ Use **MSR Assemble Contact Sheet** to composite panels back into a grid. Useful 
 | Panels are misaligned | `detect_grid` found strong borders/decorations instead of panel edges | Set `detect_grid=False` and tune `grid_size` to match your contact sheet |
 | Outputs are all black | Input tensor shape is wrong (not BHWC) or dimensions are 0 | Check `status` output for the error message |
 | Slot order is wrong | The default `panel_mapping` doesn't match your generator | Use `debug_overlay` to see the detected cells and adjust `panel_mapping` |
-| Saved files are hard to find | Default folder is `msr_crops/` in the ComfyUI working directory | Set `output_folder` to an absolute path or enable `include_timestamp` |
+| Saved files are hard to find | Default folder is `msr_crops/` in the ComfyUI working directory | Set `output_directory` to an absolute path or enable `include_timestamp` |
 
 ## FAQ
 

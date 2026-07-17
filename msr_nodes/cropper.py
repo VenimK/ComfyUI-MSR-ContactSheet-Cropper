@@ -60,7 +60,7 @@ class MSRContactSheetCropper:
                     ),
                 ),
                 "filename_prefix": ("STRING", ComfyInputSpec({"default": "msr"})),
-                "output_folder": ("STRING", ComfyInputSpec({"default": "msr_crops"})),
+                "output_directory": ("STRING", ComfyInputSpec({"default": "msr_crops"})),
                 "subfolder_by_layout": ("BOOLEAN", ComfyInputSpec({"default": False})),
                 "include_timestamp": ("BOOLEAN", ComfyInputSpec({"default": False})),
                 "save_to_disk": ("BOOLEAN", ComfyInputSpec({"default": True})),
@@ -108,7 +108,7 @@ class MSRContactSheetCropper:
         panel_mapping: str = "0,1,2,4,5",
         grid_size: int = DEFAULT_GRID_SIZE,
         filename_prefix: str = "msr",
-        output_folder: str = "msr_crops",
+        output_directory: str = "msr_crops",
         subfolder_by_layout: bool = False,
         include_timestamp: bool = False,
         save_to_disk: bool = True,
@@ -130,10 +130,14 @@ class MSRContactSheetCropper:
 
             preset = LAYOUT_PRESETS.get(layout, LAYOUT_PRESETS["ideogram_3x3"])
             grid_cols, grid_rows = preset["grid"]
+            warnings: list[str] = []
 
             mapping = parse_panel_mapping(
                 panel_mapping, len(PANEL_OUTPUT_NAMES), grid_cols, grid_rows
             )
+            clamped = mapping != [int(x.strip()) for x in panel_mapping.split(",")]
+            if clamped:
+                warnings.append(f"mapping clamped to {mapping}")
 
             first_pil = tensor_to_pil(contact_sheet[:1])
             panel_coords, backup_coords, grid_detect_status = resolve_panel_coords(
@@ -148,7 +152,6 @@ class MSRContactSheetCropper:
 
             # Aspect ratio warning
             aspect = width / float(height)
-            warnings: list[str] = []
             if not 0.9 <= aspect <= 1.1:
                 logger.warning(
                     "Input aspect ratio %.2f deviates from square; "
@@ -157,8 +160,8 @@ class MSRContactSheetCropper:
                 )
                 warnings.append("non-square input")
 
-            # Prepare output folder with optional layout subfolder and timestamp
-            save_dir = output_folder
+            # Prepare output directory with optional layout subfolder and timestamp
+            save_dir = output_directory
             if subfolder_by_layout:
                 save_dir = os.path.join(save_dir, layout)
             if include_timestamp and save_to_disk:
@@ -265,6 +268,8 @@ class MSRContactSheetCropper:
                 panel_mapping=panel_mapping,
                 grid_detect_status=grid_detect_status,
                 save_dir=save_dir if save_to_disk else None,
+                saved_count=len(PANEL_OUTPUT_NAMES) * batch_size
+                + (len(backup_coords) * batch_size if save_backup_panels else 0),
                 warnings=warnings,
             )
 
@@ -337,19 +342,26 @@ class MSRContactSheetCropper:
         panel_mapping: str,
         grid_detect_status: str,
         save_dir: str | None,
+        saved_count: int,
         warnings: list[str],
     ) -> str:
         """Build a concise, human-readable status string."""
+        if grid_detect_status == "fallback":
+            warnings.append("grid detection failed; using grid_size fallback")
+            grid_detect_status = "grid_size_fallback"
+
         parts = [
             f"OK | layout={layout}",
             f"grid={grid_cols}x{grid_rows}",
             f"image={width}x{height}",
+            f"panels={len(PANEL_OUTPUT_NAMES)}",
+            f"saved={saved_count if save_dir else 0}",
             f"batch={batch_size}",
             f"mapping={panel_mapping}",
             f"detect={grid_detect_status}",
         ]
         if save_dir:
-            parts.append(f"saved={save_dir}")
+            parts.append(f"dir={save_dir}")
         if warnings:
             parts.append(f"warnings={', '.join(warnings)}")
         return " | ".join(parts)

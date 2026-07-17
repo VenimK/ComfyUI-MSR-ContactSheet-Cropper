@@ -246,7 +246,7 @@ class TestBatchProcessing:
 
     def test_batch_saves_indexed_files(self, cropper, tmp_path):
         sheets = torch.cat([_make_contact_sheet(999) for _ in range(2)], dim=0)
-        cropper.crop_panels(sheets, save_to_disk=True, output_folder=str(tmp_path))
+        cropper.crop_panels(sheets, save_to_disk=True, output_directory=str(tmp_path))
         for name in PANEL_OUTPUT_NAMES:
             assert os.path.exists(tmp_path / f"msr_{name}_0000.png")
             assert os.path.exists(tmp_path / f"msr_{name}_0001.png")
@@ -282,7 +282,7 @@ class TestSaveToDisk:
         cropper.crop_panels(
             contact_sheet,
             save_to_disk=True,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
             save_backup_panels=False,
         )
         for name in PANEL_OUTPUT_NAMES:
@@ -293,7 +293,7 @@ class TestSaveToDisk:
             contact_sheet,
             save_to_disk=True,
             filename_prefix="custom",
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         for name in PANEL_OUTPUT_NAMES:
             assert os.path.exists(tmp_path / f"custom_{name}.png")
@@ -303,7 +303,7 @@ class TestSaveToDisk:
             contact_sheet,
             save_to_disk=True,
             save_backup_panels=True,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         for name in PANEL_OUTPUT_NAMES:
             assert os.path.exists(tmp_path / f"msr_{name}.png")
@@ -316,7 +316,7 @@ class TestSaveToDisk:
         cropper.crop_panels(
             contact_sheet,
             save_to_disk=False,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         assert len(list(tmp_path.iterdir())) == 0
 
@@ -325,7 +325,7 @@ class TestSaveToDisk:
             contact_sheet,
             save_to_disk=True,
             include_timestamp=True,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         subdirs = [d for d in tmp_path.iterdir() if d.is_dir()]
         assert len(subdirs) == 1
@@ -380,21 +380,21 @@ class TestConvenienceFeatures:
         cropper.crop_panels(
             contact_sheet,
             save_to_disk=True,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         manifest_path = tmp_path / "manifest.json"
         assert manifest_path.exists()
         data = json.loads(manifest_path.read_text())
         assert data["layout"] == "ideogram_3x3"
         assert data["panel_mapping"] == [0, 1, 2, 4, 5]
-        assert data["grid_detect_status"] in ("success", "fallback")
+        assert data["grid_detect_status"] in ("success", "fallback", "grid_size_fallback")
 
     def test_save_debug_overlay(self, cropper, contact_sheet, tmp_path):
         cropper.crop_panels(
             contact_sheet,
             save_to_disk=True,
             save_debug_overlay=True,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         assert (tmp_path / "msr_debug_overlay.png").exists()
 
@@ -403,7 +403,7 @@ class TestConvenienceFeatures:
             contact_sheet,
             save_to_disk=True,
             subfolder_by_layout=True,
-            output_folder=str(tmp_path),
+            output_directory=str(tmp_path),
         )
         layout_dir = tmp_path / "ideogram_3x3"
         assert layout_dir.is_dir()
