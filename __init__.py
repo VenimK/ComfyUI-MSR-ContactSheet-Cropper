@@ -18,6 +18,7 @@ Features:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime
@@ -25,7 +26,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
@@ -82,9 +83,15 @@ LAYOUT_PRESETS: dict[str, dict[str, Any]] = {
 
 PANEL_OUTPUT_NAMES = ("background", "slot1", "slot2", "slot3", "slot4")
 OVERLAY_COLORS = [
-    (255, 0, 0), (0, 255, 0), (0, 0, 255),
-    (255, 255, 0), (255, 0, 255), (0, 255, 255),
-    (255, 128, 0), (128, 0, 255), (255, 255, 255),
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+    (255, 255, 0),
+    (255, 0, 255),
+    (0, 255, 255),
+    (255, 128, 0),
+    (128, 0, 255),
+    (255, 255, 255),
 ]
 
 
@@ -92,11 +99,14 @@ OVERLAY_COLORS = [
 
 
 def _detect_grid_lines(
-    img_np: np.ndarray, expected_cells: int = 3,
+    img_np: np.ndarray,
+    expected_cells: int = 3,
 ) -> tuple[list[int], list[int]] | None:
-    """Detect internal grid lines from image content.
+    """Detect internal grid lines from image content using RGB differences.
 
-    Uses row/column variance profiles to find cell boundaries.
+    Uses row/column color-difference profiles to find cell boundaries.
+    This is more robust than grayscale-only profiles for contact sheets
+    where neighboring panels may have similar brightness.
 
     Args:
         img_np: Image as numpy array (H, W, C) in uint8.
@@ -106,13 +116,15 @@ def _detect_grid_lines(
         Tuple of (horizontal_line_positions, vertical_line_positions) in pixels,
         or None if detection fails.
     """
-    gray = img_np.mean(axis=2) if img_np.ndim == 3 else img_np
+    if img_np.ndim == 2:
+        img_np = np.stack([img_np, img_np, img_np], axis=2)
 
-    row_diffs = np.abs(np.diff(gray, axis=0)).mean(axis=1)
-    col_diffs = np.abs(np.diff(gray, axis=1)).mean(axis=0)
+    # Mean absolute RGB difference across rows/columns
+    row_diffs = np.abs(np.diff(img_np, axis=0)).mean(axis=(1, 2))
+    col_diffs = np.abs(np.diff(img_np, axis=1)).mean(axis=(1, 2))
 
-    h_lines = _find_grid_peaks(row_diffs, expected_cells - 1, gray.shape[0])
-    v_lines = _find_grid_peaks(col_diffs, expected_cells - 1, gray.shape[1])
+    h_lines = _find_grid_peaks(row_diffs, expected_cells - 1, img_np.shape[0])
+    v_lines = _find_grid_peaks(col_diffs, expected_cells - 1, img_np.shape[1])
 
     if h_lines is None or v_lines is None:
         return None
@@ -121,46 +133,73 @@ def _detect_grid_lines(
 
 
 def _find_grid_peaks(
-    profile: np.ndarray, n_expected: int, total_size: int,
+    profile: np.ndarray,
+    n_expected: int,
+    total_size: int,
 ) -> list[int] | None:
-    """Find the N strongest evenly-spaced peaks in a 1D profile."""
+    """Find the N expected evenly-spaced grid lines in a difference profile.
+
+    Uses a simple comb-matching approach: the best set of internal grid
+    lines is the one that maximizes the total profile response at positions
+    that are roughly evenly spaced across the image.
+    """
     if len(profile) == 0 or n_expected <= 0:
         return []
 
-    threshold = float(profile.mean()) + float(profile.std()) * 1.5
-    peaks = np.where(profile > threshold)[0]
+    if n_expected == 1:
+        # Single line: take the strongest peak near the middle half
+        start = total_size // 4
+        end = 3 * total_size // 4
+        return [int(start + np.argmax(profile[start:end]))]
 
-    if len(peaks) == 0:
+    # Expected spacing between adjacent grid lines
+    spacing = total_size / (n_expected + 1)
+
+    # Smooth profile slightly to reduce noise
+    window = max(total_size // 200, 3)
+    if window % 2 == 0:
+        window += 1
+    kernel = np.ones(window) / window
+    smoothed = np.convolve(profile, kernel, mode="same")
+
+    best_score = -np.inf
+    best_offset = 0.0
+    # Search offsets within one spacing step
+    search_steps = max(int(spacing), 10)
+    for step in range(search_steps):
+        offset = step * spacing / search_steps
+        positions = [int(round(offset + k * spacing)) for k in range(1, n_expected + 1)]
+        positions = [max(0, min(p, len(smoothed) - 1)) for p in positions]
+        score = sum(smoothed[p] for p in positions)
+        if score > best_score:
+            best_score = score
+            best_offset = offset
+
+    lines = sorted(int(round(best_offset + k * spacing)) for k in range(1, n_expected + 1))
+
+    # Refine each line by looking for a local maximum in a small neighborhood
+    refined: list[int] = []
+    half_window = max(total_size // 100, 2)
+    for line in lines:
+        start = max(0, line - half_window)
+        end = min(len(smoothed), line + half_window + 1)
+        local_peak = start + int(np.argmax(smoothed[start:end]))
+        refined.append(local_peak)
+
+    # Validate that we got enough distinct lines
+    if len(set(refined)) < n_expected:
+        logger.debug("Grid detection: only %d distinct lines found", len(set(refined)))
         return None
 
-    gap = max(total_size // 50, 3)
-    groups: list[list[int]] = [[int(peaks[0])]]
-    for p in peaks[1:]:
-        if p - groups[-1][-1] <= gap:
-            groups[-1].append(int(p))
-        else:
-            groups.append([int(p)])
-
-    centers = [int(np.mean(g)) for g in groups]
-
-    if len(centers) > n_expected:
-        strengths = [float(profile[c]) for c in centers]
-        top_idx = np.argsort(strengths)[-n_expected:]
-        centers = sorted([centers[i] for i in top_idx])
-
-    if len(centers) < n_expected:
-        logger.debug(
-            "Grid detection: found %d/%d expected lines", len(centers), n_expected
-        )
-        return None
-
-    return centers
+    return refined
 
 
 def _cell_to_pixel(
     cell: tuple[int, int, int, int],
-    width: int, height: int,
-    grid_cols: int, grid_rows: int,
+    width: int,
+    height: int,
+    grid_cols: int,
+    grid_rows: int,
 ) -> tuple[int, int, int, int]:
     """Convert cell coordinates to pixel coordinates."""
     left = int(cell[0] * width / grid_cols)
@@ -171,7 +210,11 @@ def _cell_to_pixel(
 
 
 def _crop_tensor(
-    tensor: torch.Tensor, top: int, left: int, bottom: int, right: int,
+    tensor: torch.Tensor,
+    top: int,
+    left: int,
+    bottom: int,
+    right: int,
 ) -> torch.Tensor:
     """Crop a tensor on GPU/CPU: (B, H, W, C) -> (B, H', W', C)."""
     return tensor[:, top:bottom, left:right, :].contiguous()
@@ -197,28 +240,68 @@ def _make_mask(height: int, width: int, batch: int = 1) -> torch.Tensor:
 def _draw_debug_overlay(
     pil_img: Image.Image,
     panel_coords: dict[str, tuple[int, int, int, int]],
+    grid_cols: int = 3,
+    grid_rows: int = 3,
 ) -> Image.Image:
-    """Draw labeled rectangles on the image for visual debugging."""
+    """Draw a polished debug overlay with grid lines and labeled panels."""
+    width, height = pil_img.size
     overlay = pil_img.copy()
-    draw = ImageDraw.Draw(overlay)
+    draw = ImageDraw.Draw(overlay, "RGBA")
 
+    # Full grid lines
+    grid_color = (255, 255, 255, 80)
+    for col in range(1, grid_cols):
+        x = int(col * width / grid_cols)
+        draw.line([(x, 0), (x, height)], fill=grid_color, width=2)
+    for row in range(1, grid_rows):
+        y = int(row * height / grid_rows)
+        draw.line([(0, y), (width, y)], fill=grid_color, width=2)
+
+    # Panel rectangles with semi-transparent fill
     for i, (name, (left, top, right, bottom)) in enumerate(panel_coords.items()):
         color = OVERLAY_COLORS[i % len(OVERLAY_COLORS)]
-        draw.rectangle([left, top, right - 1, bottom - 1], outline=color, width=3)
-        bbox = draw.textbbox((left + 4, top + 4), name)
+        fill_color = color + (40,)
+        draw.rectangle([left, top, right - 1, bottom - 1], fill=fill_color)
+        draw.rectangle([left, top, right - 1, bottom - 1], outline=color, width=4)
+
+        label = name.replace("_", " ")
+        font = _get_overlay_font()
+        text_pos = (left + 6, top + 6)
+        bbox = draw.textbbox(text_pos, label, font=font) if font else draw.textbbox(text_pos, label)
         draw.rectangle(
-            [bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2], fill=color
+            [bbox[0] - 3, bbox[1] - 3, bbox[2] + 3, bbox[3] + 3],
+            fill=color + (220,),
         )
-        draw.text((left + 4, top + 4), name, fill=(0, 0, 0))
+        draw.text(text_pos, label, fill=(0, 0, 0), font=font)
 
-    return overlay
+    return overlay.convert("RGB")
 
 
-def _parse_panel_mapping(mapping_str: str, n_slots: int = 5) -> list[int]:
-    """Parse a panel mapping string like '0,1,2,5,6' into cell indices.
+def _get_overlay_font(size: int = 16) -> ImageFont.FreeTypeFont | None:
+    """Return a readable TrueType font if available, otherwise None."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "arial.ttf",
+        "DejaVuSans-Bold.ttf",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return None
+
+
+def _parse_panel_mapping(
+    mapping_str: str, n_slots: int = 5, grid_cols: int = 3, grid_rows: int = 3
+) -> list[int]:
+    """Parse and clamp a panel mapping string to valid grid cell indices.
 
     Each index refers to a cell in row-major order (0=top-left, 1=top-center, ...).
+    Out-of-range indices are clamped to the nearest valid cell and logged.
     """
+    max_cell = grid_cols * grid_rows - 1
     try:
         indices = [int(x.strip()) for x in mapping_str.split(",")]
     except ValueError:
@@ -228,15 +311,25 @@ def _parse_panel_mapping(mapping_str: str, n_slots: int = 5) -> list[int]:
     if len(indices) != n_slots:
         logger.warning(
             "Panel mapping has %d indices, expected %d; using default",
-            len(indices), n_slots,
+            len(indices),
+            n_slots,
         )
         return [0, 1, 2, 4, 5]
 
-    return indices
+    clamped: list[int] = []
+    for idx in indices:
+        if idx < 0 or idx > max_cell:
+            logger.warning("Panel mapping index %d out of range [0, %d]; clamping", idx, max_cell)
+            idx = max(0, min(idx, max_cell))
+        clamped.append(idx)
+
+    return clamped
 
 
 def _apply_panel_mapping(
-    mapping: list[int], grid_cols: int, grid_rows: int,
+    mapping: list[int],
+    grid_cols: int,
+    grid_rows: int,
 ) -> dict[str, tuple[int, int, int, int]]:
     """Build cell coordinates for each output panel based on mapping."""
     result: dict[str, tuple[int, int, int, int]] = {}
@@ -265,26 +358,49 @@ class MSRContactSheetCropper:
                     ["ideogram_3x3", "midjourney_4x4", "custom_3x3"],
                     {"default": "ideogram_3x3"},
                 ),
-                "detect_grid": ("BOOLEAN", {"default": False}),
-                "grid_size": ("INT", {"default": DEFAULT_GRID_SIZE, "min": 1, "max": 10000, "step": 1}),
+                "detect_grid": ("BOOLEAN", {"default": True}),
                 "panel_mapping": ("STRING", {"default": "0,1,2,4,5", "multiline": False}),
+                "grid_size": (
+                    "INT",
+                    {"default": DEFAULT_GRID_SIZE, "min": 1, "max": 10000, "step": 1},
+                ),
                 "filename_prefix": ("STRING", {"default": "msr"}),
+                "output_folder": ("STRING", {"default": "msr_crops"}),
+                "subfolder_by_layout": ("BOOLEAN", {"default": False}),
+                "include_timestamp": ("BOOLEAN", {"default": False}),
                 "save_to_disk": ("BOOLEAN", {"default": True}),
                 "save_backup_panels": ("BOOLEAN", {"default": False}),
-                "include_timestamp": ("BOOLEAN", {"default": False}),
-                "output_folder": ("STRING", {"default": "msr_crops"}),
+                "save_debug_overlay": ("BOOLEAN", {"default": False}),
             },
         }
 
     RETURN_TYPES = (
-        "IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE",
-        "MASK", "MASK", "MASK", "MASK", "MASK",
-        "IMAGE", "STRING",
+        "IMAGE",
+        "IMAGE",
+        "IMAGE",
+        "IMAGE",
+        "IMAGE",
+        "MASK",
+        "MASK",
+        "MASK",
+        "MASK",
+        "MASK",
+        "IMAGE",
+        "STRING",
     )
     RETURN_NAMES = (
-        "background", "slot1", "slot2", "slot3", "slot4",
-        "mask_bg", "mask_slot1", "mask_slot2", "mask_slot3", "mask_slot4",
-        "debug_overlay", "status",
+        "background",
+        "slot_1",
+        "slot_2",
+        "slot_3",
+        "slot_4",
+        "mask_bg",
+        "mask_slot_1",
+        "mask_slot_2",
+        "mask_slot_3",
+        "mask_slot_4",
+        "debug_overlay",
+        "status",
     )
     FUNCTION = "crop_panels"
     CATEGORY = "Licon-MSR / Utils"
@@ -295,14 +411,16 @@ class MSRContactSheetCropper:
         self,
         contact_sheet: torch.Tensor,
         layout: str = "ideogram_3x3",
-        detect_grid: bool = False,
-        grid_size: int = DEFAULT_GRID_SIZE,
+        detect_grid: bool = True,
         panel_mapping: str = "0,1,2,4,5",
+        grid_size: int = DEFAULT_GRID_SIZE,
         filename_prefix: str = "msr",
+        output_folder: str = "msr_crops",
+        subfolder_by_layout: bool = False,
+        include_timestamp: bool = False,
         save_to_disk: bool = True,
         save_backup_panels: bool = False,
-        include_timestamp: bool = False,
-        output_folder: str = "msr_crops",
+        save_debug_overlay: bool = False,
     ) -> tuple[torch.Tensor, ...]:
         """Crop the contact sheet into panels with full feature support.
 
@@ -310,20 +428,23 @@ class MSRContactSheetCropper:
             contact_sheet: Input image tensor (B, H, W, C) in [0, 1].
             layout: Layout preset name.
             detect_grid: Auto-detect grid lines from image content.
-            grid_size: Reference grid dimension (used when detect_grid is False).
             panel_mapping: Comma-separated cell indices for panel assignment.
+            grid_size: Reference grid dimension (used when detect_grid is False).
             filename_prefix: Prefix for saved filenames.
+            output_folder: Output directory for saved files.
+            subfolder_by_layout: Create a subfolder per layout preset.
+            include_timestamp: Add timestamp subfolder to output path.
             save_to_disk: Whether to write crops to disk.
             save_backup_panels: Whether to also process backup panels.
-            include_timestamp: Add timestamp subfolder to output path.
-            output_folder: Output directory for saved files.
+            save_debug_overlay: Whether to save the debug overlay image.
 
         Returns:
             Tuple of (5 IMAGE, 5 MASK, debug overlay IMAGE, status STRING).
         """
         logger.info(
             "MSR Contact Sheet Cropper started (layout=%s, batch=%d)",
-            layout, contact_sheet.shape[0],
+            layout,
+            contact_sheet.shape[0],
         )
         logger.debug("Input tensor shape: %s", contact_sheet.shape)
 
@@ -340,25 +461,26 @@ class MSRContactSheetCropper:
             preset = LAYOUT_PRESETS.get(layout, LAYOUT_PRESETS["ideogram_3x3"])
             grid_cols, grid_rows = preset["grid"]
 
+            # Parse and clamp panel mapping
+            mapping = _parse_panel_mapping(
+                panel_mapping, len(PANEL_OUTPUT_NAMES), grid_cols, grid_rows
+            )
+
             # Auto-detect grid lines if requested
             detected_lines = None
+            grid_detect_status = "off"
             if detect_grid:
                 first_pil = _tensor_to_pil(contact_sheet[:1])
                 img_np = np.array(first_pil)
                 detected_lines = _detect_grid_lines(img_np, grid_cols)
                 if detected_lines is not None:
                     h_lines, v_lines = detected_lines
-                    logger.info(
-                        "Grid detected: H lines %s, V lines %s", h_lines, v_lines
-                    )
+                    logger.info("Grid detected: H lines %s, V lines %s", h_lines, v_lines)
                 else:
                     logger.warning(
                         "Grid detection failed, falling back to grid_size=%d",
                         grid_size,
                     )
-
-            # Parse panel mapping
-            mapping = _parse_panel_mapping(panel_mapping, len(PANEL_OUTPUT_NAMES))
 
             # Build panel pixel coordinates
             if detect_grid and detected_lines is not None:
@@ -388,19 +510,17 @@ class MSRContactSheetCropper:
                     aspect,
                 )
 
-            # Prepare output folder with optional timestamp
+            # Prepare output folder with optional layout subfolder and timestamp
             save_dir = output_folder
+            if subfolder_by_layout:
+                save_dir = os.path.join(save_dir, layout)
             if include_timestamp and save_to_disk:
                 ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                save_dir = os.path.join(output_folder, ts)
+                save_dir = os.path.join(save_dir, ts)
 
             # Process each image in batch
-            all_panel_tensors: list[list[torch.Tensor]] = [
-                [] for _ in PANEL_OUTPUT_NAMES
-            ]
-            all_mask_tensors: list[list[torch.Tensor]] = [
-                [] for _ in PANEL_OUTPUT_NAMES
-            ]
+            all_panel_tensors: list[list[torch.Tensor]] = [[] for _ in PANEL_OUTPUT_NAMES]
+            all_mask_tensors: list[list[torch.Tensor]] = [[] for _ in PANEL_OUTPUT_NAMES]
             overlay_tensors: list[torch.Tensor] = []
 
             for batch_idx in range(batch_size):
@@ -409,8 +529,20 @@ class MSRContactSheetCropper:
                 # Debug overlay (from first image or every image if batch == 1)
                 if batch_idx == 0 or batch_size == 1:
                     pil_for_overlay = _tensor_to_pil(img_tensor)
-                    overlay_pil = _draw_debug_overlay(pil_for_overlay, panel_coords)
+                    overlay_pil = _draw_debug_overlay(
+                        pil_for_overlay, panel_coords, grid_cols, grid_rows
+                    )
                     overlay_tensors.append(_pil_to_tensor(overlay_pil))
+
+                    if save_to_disk and save_debug_overlay:
+                        self._save_panel(
+                            overlay_pil,
+                            save_dir,
+                            filename_prefix,
+                            "debug_overlay",
+                            batch_idx,
+                            batch_size,
+                        )
 
                 # GPU-side crop each panel
                 for panel_idx, name in enumerate(PANEL_OUTPUT_NAMES):
@@ -424,8 +556,12 @@ class MSRContactSheetCropper:
                     if save_to_disk:
                         pil_crop = _tensor_to_pil(crop)
                         self._save_panel(
-                            pil_crop, save_dir, filename_prefix,
-                            name, batch_idx, batch_size,
+                            pil_crop,
+                            save_dir,
+                            filename_prefix,
+                            name,
+                            batch_idx,
+                            batch_size,
                         )
 
                 # Save backup panels
@@ -435,8 +571,12 @@ class MSRContactSheetCropper:
                         if save_to_disk:
                             pil_crop = _tensor_to_pil(crop)
                             self._save_panel(
-                                pil_crop, save_dir, filename_prefix,
-                                name, batch_idx, batch_size,
+                                pil_crop,
+                                save_dir,
+                                filename_prefix,
+                                name,
+                                batch_idx,
+                                batch_size,
                             )
 
             # Stack batch results
@@ -455,21 +595,42 @@ class MSRContactSheetCropper:
                 else torch.zeros((1, height, width, 3), dtype=torch.float32)
             )
 
-            # Build status string
-            status_parts = [
-                f"Layout: {layout}",
-                f"Grid: {grid_cols}x{grid_rows}",
-                f"Image: {width}x{height}",
-                f"Batch: {batch_size}",
-                f"Mapping: {panel_mapping}",
-            ]
+            # Build human-readable status string
             if detect_grid:
-                status_parts.append(
-                    f"Auto-detect: {'success' if detected_lines else 'failed (fallback)'}"
-                )
+                grid_detect_status = "success" if detected_lines else "fallback"
+
+            warnings: list[str] = []
+            aspect = width / float(height)
+            if not 0.9 <= aspect <= 1.1:
+                warnings.append("non-square input")
+
+            status = self._build_status(
+                layout=layout,
+                grid_cols=grid_cols,
+                grid_rows=grid_rows,
+                width=width,
+                height=height,
+                batch_size=batch_size,
+                panel_mapping=panel_mapping,
+                grid_detect_status=grid_detect_status,
+                save_dir=save_dir if save_to_disk else None,
+                warnings=warnings,
+            )
+
+            # Write manifest with run metadata
             if save_to_disk:
-                status_parts.append(f"Saved to: {save_dir}")
-            status = " | ".join(status_parts)
+                self._write_manifest(
+                    save_dir,
+                    layout=layout,
+                    grid_cols=grid_cols,
+                    grid_rows=grid_rows,
+                    width=width,
+                    height=height,
+                    panel_mapping=mapping,
+                    grid_detect_status=grid_detect_status,
+                    saved_count=len(PANEL_OUTPUT_NAMES) * batch_size
+                    + (len(backup_coords) * batch_size if save_backup_panels else 0),
+                )
 
             logger.info("All panels processed: %s", status)
             return tuple(panel_outputs + mask_outputs + [overlay_output, status])
@@ -479,24 +640,89 @@ class MSRContactSheetCropper:
             panel_size = max(grid_size // 3, 1)
             empty_img = torch.zeros((1, panel_size, panel_size, 3), dtype=torch.float32)
             empty_mask = torch.zeros((1, panel_size, panel_size), dtype=torch.float32)
-            empty_overlay = torch.zeros(
-                (1, panel_size * 3, panel_size * 3, 3), dtype=torch.float32
-            )
+            empty_overlay = torch.zeros((1, panel_size * 3, panel_size * 3, 3), dtype=torch.float32)
             error_status = f"ERROR: {exc}"
             return (
-                empty_img, empty_img, empty_img, empty_img, empty_img,
-                empty_mask, empty_mask, empty_mask, empty_mask, empty_mask,
-                empty_overlay, error_status,
+                empty_img,
+                empty_img,
+                empty_img,
+                empty_img,
+                empty_img,
+                empty_mask,
+                empty_mask,
+                empty_mask,
+                empty_mask,
+                empty_mask,
+                empty_overlay,
+                error_status,
             )
 
     # --- Private helpers -----------------------------------------------------
 
     @staticmethod
+    def _build_status(
+        layout: str,
+        grid_cols: int,
+        grid_rows: int,
+        width: int,
+        height: int,
+        batch_size: int,
+        panel_mapping: str,
+        grid_detect_status: str,
+        save_dir: str | None,
+        warnings: list[str],
+    ) -> str:
+        """Build a concise, human-readable status string."""
+        parts = [
+            f"OK | layout={layout}",
+            f"grid={grid_cols}x{grid_rows}",
+            f"image={width}x{height}",
+            f"batch={batch_size}",
+            f"mapping={panel_mapping}",
+            f"detect={grid_detect_status}",
+        ]
+        if save_dir:
+            parts.append(f"saved={save_dir}")
+        if warnings:
+            parts.append(f"warnings={', '.join(warnings)}")
+        return " | ".join(parts)
+
+    @staticmethod
+    def _write_manifest(
+        output_folder: str,
+        layout: str,
+        grid_cols: int,
+        grid_rows: int,
+        width: int,
+        height: int,
+        panel_mapping: list[int],
+        grid_detect_status: str,
+        saved_count: int,
+    ) -> None:
+        """Write a JSON manifest describing the crop run."""
+        os.makedirs(output_folder, exist_ok=True)
+        manifest = {
+            "created_at": datetime.now().isoformat(),
+            "layout": layout,
+            "grid": {"cols": grid_cols, "rows": grid_rows},
+            "image": {"width": width, "height": height},
+            "panel_mapping": panel_mapping,
+            "grid_detect_status": grid_detect_status,
+            "saved_files": saved_count,
+        }
+        path = os.path.join(output_folder, "manifest.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+
+    @staticmethod
     def _coords_from_detected(
-        width: int, height: int,
-        h_lines: list[int], v_lines: list[int],
+        width: int,
+        height: int,
+        h_lines: list[int],
+        v_lines: list[int],
         mapping: list[int],
-        grid_cols: int, grid_rows: int,
+        grid_cols: int,
+        grid_rows: int,
     ) -> dict[str, tuple[int, int, int, int]]:
         """Build pixel coordinates from detected grid lines + panel mapping."""
         all_h = [0] + sorted(h_lines) + [height]
@@ -512,10 +738,13 @@ class MSRContactSheetCropper:
 
     @staticmethod
     def _coords_from_detected_backup(
-        width: int, height: int,
-        h_lines: list[int], v_lines: list[int],
+        width: int,
+        height: int,
+        h_lines: list[int],
+        v_lines: list[int],
         preset: dict[str, Any],
-        grid_cols: int, grid_rows: int,
+        grid_cols: int,
+        grid_rows: int,
     ) -> dict[str, tuple[int, int, int, int]]:
         """Build backup panel pixel coordinates from detected grid lines."""
         all_h = [0] + sorted(h_lines) + [height]
@@ -525,8 +754,10 @@ class MSRContactSheetCropper:
         for name, cell in preset.get("backup", {}).items():
             col_start, row_start, col_end, row_end = cell
             result[name] = (
-                all_v[col_start], all_h[row_start],
-                all_v[col_end], all_h[row_end],
+                all_v[col_start],
+                all_h[row_start],
+                all_v[col_end],
+                all_h[row_end],
             )
 
         return result
@@ -613,7 +844,9 @@ class MSRContactSheetAssembler:
         try:
             preset = LAYOUT_PRESETS.get(layout, LAYOUT_PRESETS["ideogram_3x3"])
             grid_cols, grid_rows = preset["grid"]
-            mapping = _parse_panel_mapping(panel_mapping, len(PANEL_OUTPUT_NAMES))
+            mapping = _parse_panel_mapping(
+                panel_mapping, len(PANEL_OUTPUT_NAMES), grid_cols, grid_rows
+            )
 
             panels = {
                 "background": background,
@@ -631,7 +864,8 @@ class MSRContactSheetAssembler:
 
             result = torch.full(
                 (batch_size, canvas_h, canvas_w, 3),
-                bg_val, dtype=torch.float32,
+                bg_val,
+                dtype=torch.float32,
             )
 
             for name, cell_idx in zip(PANEL_OUTPUT_NAMES, mapping):
@@ -648,29 +882,25 @@ class MSRContactSheetAssembler:
 
                 for b in range(batch_size):
                     pil_panel = _tensor_to_pil(panel[b : b + 1])
-                    pil_resized = pil_panel.resize(
-                        (cell_size, cell_size), Image.LANCZOS
-                    )
+                    pil_resized = pil_panel.resize((cell_size, cell_size), Image.LANCZOS)
                     resized_tensor = _pil_to_tensor(pil_resized)
 
                     h_fit = min(resized_tensor.shape[1], cell_size)
                     w_fit = min(resized_tensor.shape[2], cell_size)
-                    result[
-                        b, top : top + h_fit, left : left + w_fit, :
-                    ] = resized_tensor[0, :h_fit, :w_fit, :]
+                    result[b, top : top + h_fit, left : left + w_fit, :] = resized_tensor[
+                        0, :h_fit, :w_fit, :
+                    ]
 
             status = (
-                f"Assembled {grid_cols}x{grid_rows} grid "
-                f"({canvas_w}x{canvas_h}) | Batch: {batch_size}"
+                f"OK | assembled {grid_cols}x{grid_rows} grid "
+                f"({canvas_w}x{canvas_h}) | batch={batch_size}"
             )
             logger.info(status)
             return result, status
 
         except (ValueError, RuntimeError, OSError) as exc:
             logger.exception("Failed to assemble contact sheet: %s", exc)
-            empty = torch.zeros(
-                (1, cell_size * 3, cell_size * 3, 3), dtype=torch.float32
-            )
+            empty = torch.zeros((1, cell_size * 3, cell_size * 3, 3), dtype=torch.float32)
             return empty, f"ERROR: {exc}"
 
 
@@ -682,8 +912,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MSRContactSheetCropper": "MSR Contact Sheet Cropper",
-    "MSRContactSheetAssembler": "MSR Contact Sheet Assembler",
+    "MSRContactSheetCropper": "MSR Crop Contact Sheet",
+    "MSRContactSheetAssembler": "MSR Assemble Contact Sheet",
 }
 
 logger.info(

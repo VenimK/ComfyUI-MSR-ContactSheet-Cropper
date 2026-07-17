@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-msr-contactsheet-cropper"
-description = "Custom node for cropping MSR Contact Sheets into the 5 panels needed for Licon-MSR workflows"
+description = "ComfyUI custom nodes for cropping and assembling MSR Contact Sheets with auto-detection, layout presets, batch processing, masks, and debug overlays"
 version = "1.0.0"
 license = {text = "MIT"}
 authors = [

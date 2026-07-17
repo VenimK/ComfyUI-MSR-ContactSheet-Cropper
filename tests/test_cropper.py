@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import os
+import sys
 
 import numpy as np
 import pytest
 import torch
-from PIL import Image
 
-import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from __init__ import (
-    MSRContactSheetCropper,
-    MSRContactSheetAssembler,
     LAYOUT_PRESETS,
     PANEL_OUTPUT_NAMES,
+    MSRContactSheetAssembler,
+    MSRContactSheetCropper,
 )
-
 
 # --- Fixtures -----------------------------------------------------------------
 
@@ -32,14 +31,14 @@ def _make_contact_sheet(size: int = 1000) -> torch.Tensor:
     img = np.zeros((size, size, 3), dtype=np.uint8)
 
     colors = [
-        (255, 0, 0),    # (0,0) red – background
-        (0, 255, 0),    # (1,0) green – slot1
-        (0, 0, 255),    # (2,0) blue – slot2
+        (255, 0, 0),  # (0,0) red – background
+        (0, 255, 0),  # (1,0) green – slot1
+        (0, 0, 255),  # (2,0) blue – slot2
         (255, 255, 0),  # (0,1) yellow – backup_A
         (255, 0, 255),  # (1,1) magenta – slot3
         (0, 255, 255),  # (2,1) cyan – slot4
-        (128, 0, 0),    # (0,2) dark red – backup_B
-        (0, 128, 0),    # (1,2) dark green – backup_bg
+        (128, 0, 0),  # (0,2) dark red – backup_B
+        (0, 128, 0),  # (1,2) dark green – backup_bg
         (128, 128, 0),  # (2,2) olive – backup_wide
     ]
 
@@ -108,7 +107,8 @@ class TestCropOutputStructure:
         result = cropper.crop_panels(contact_sheet, save_to_disk=False)
         status = result[11]
         assert isinstance(status, str)
-        assert "Layout" in status
+        assert "layout=ideogram_3x3" in status
+        assert "detect=" in status
 
 
 # --- Cropper: panel content ---------------------------------------------------
@@ -170,22 +170,20 @@ class TestLayoutPresets:
     """Tests for layout preset selection."""
 
     def test_ideogram_3x3_default(self, cropper, contact_sheet):
-        result = cropper.crop_panels(
-            contact_sheet, layout="ideogram_3x3", save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, layout="ideogram_3x3", save_to_disk=False)
         status = result[11]
         assert "3x3" in status
 
     def test_midjourney_4x4(self, cropper, contact_sheet):
-        result = cropper.crop_panels(
-            contact_sheet, layout="midjourney_4x4", save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, layout="midjourney_4x4", save_to_disk=False)
         status = result[11]
         assert "4x4" in status
 
     def test_custom_3x3(self, cropper, contact_sheet):
         result = cropper.crop_panels(
-            contact_sheet, layout="custom_3x3", panel_mapping="0,1,2,3,4",
+            contact_sheet,
+            layout="custom_3x3",
+            panel_mapping="0,1,2,3,4",
             save_to_disk=False,
         )
         # With mapping 0,1,2,3,4: slot3=cell3=(0,1) which is yellow
@@ -203,9 +201,7 @@ class TestPanelRemapping:
     """Tests for panel-to-slot remapping."""
 
     def test_default_mapping(self, cropper, contact_sheet):
-        result = cropper.crop_panels(
-            contact_sheet, panel_mapping="0,1,2,4,5", save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, panel_mapping="0,1,2,4,5", save_to_disk=False)
         # Default: bg=cell0(red), slot1=cell1(green), slot2=cell2(blue)
         bg = result[0]
         _, h, w, _ = bg.shape
@@ -213,9 +209,7 @@ class TestPanelRemapping:
 
     def test_custom_mapping_swaps_panels(self, cropper, contact_sheet):
         # Map background to cell 1 (green), slot1 to cell 0 (red)
-        result = cropper.crop_panels(
-            contact_sheet, panel_mapping="1,0,2,4,5", save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, panel_mapping="1,0,2,4,5", save_to_disk=False)
         bg = result[0]
         _, h, w, _ = bg.shape
         pixel = bg[0, h // 2, w // 2, :].cpu().numpy()
@@ -227,9 +221,7 @@ class TestPanelRemapping:
         assert pixel1[0] > 0.9  # red (was cell 0)
 
     def test_invalid_mapping_falls_back(self, cropper, contact_sheet):
-        result = cropper.crop_panels(
-            contact_sheet, panel_mapping="not,numbers", save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, panel_mapping="not,numbers", save_to_disk=False)
         # Should fall back to default and still produce 12 outputs
         assert len(result) == 12
 
@@ -254,9 +246,7 @@ class TestBatchProcessing:
 
     def test_batch_saves_indexed_files(self, cropper, tmp_path):
         sheets = torch.cat([_make_contact_sheet(999) for _ in range(2)], dim=0)
-        cropper.crop_panels(
-            sheets, save_to_disk=True, output_folder=str(tmp_path)
-        )
+        cropper.crop_panels(sheets, save_to_disk=True, output_folder=str(tmp_path))
         for name in PANEL_OUTPUT_NAMES:
             assert os.path.exists(tmp_path / f"msr_{name}_0000.png")
             assert os.path.exists(tmp_path / f"msr_{name}_0001.png")
@@ -269,16 +259,12 @@ class TestGridDetection:
     """Tests for auto-detect grid lines."""
 
     def test_detect_grid_on_synthetic_sheet(self, cropper, contact_sheet):
-        result = cropper.crop_panels(
-            contact_sheet, detect_grid=True, save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, detect_grid=True, save_to_disk=False)
         status = result[11]
-        assert "Auto-detect" in status
+        assert "detect=success" in status
 
     def test_detect_grid_still_crops(self, cropper, contact_sheet):
-        result = cropper.crop_panels(
-            contact_sheet, detect_grid=True, save_to_disk=False
-        )
+        result = cropper.crop_panels(contact_sheet, detect_grid=True, save_to_disk=False)
         # Background should still be red
         bg = result[0]
         _, h, w, _ = bg.shape
@@ -345,9 +331,7 @@ class TestSaveToDisk:
         assert len(subdirs) == 1
         # Files should be inside the timestamp subdir
         for name in PANEL_OUTPUT_NAMES:
-            assert any(
-                f"msr_{name}.png" in str(f) for f in subdirs[0].iterdir()
-            )
+            assert any(f"msr_{name}.png" in str(f) for f in subdirs[0].iterdir())
 
 
 # --- Cropper: error handling --------------------------------------------------
@@ -383,6 +367,48 @@ class TestErrorHandling:
         with caplog.at_level("WARNING"):
             result = cropper.crop_panels(tensor, save_to_disk=False)
         assert len(result) == 12
+        assert "non-square" in result[11]
+
+
+# --- Cropper: convenience features -------------------------------------------
+
+
+class TestConvenienceFeatures:
+    """Tests for manifest, debug overlay saving, and subfolder organization."""
+
+    def test_manifest_written(self, cropper, contact_sheet, tmp_path):
+        cropper.crop_panels(
+            contact_sheet,
+            save_to_disk=True,
+            output_folder=str(tmp_path),
+        )
+        manifest_path = tmp_path / "manifest.json"
+        assert manifest_path.exists()
+        data = json.loads(manifest_path.read_text())
+        assert data["layout"] == "ideogram_3x3"
+        assert data["panel_mapping"] == [0, 1, 2, 4, 5]
+        assert data["grid_detect_status"] in ("success", "fallback")
+
+    def test_save_debug_overlay(self, cropper, contact_sheet, tmp_path):
+        cropper.crop_panels(
+            contact_sheet,
+            save_to_disk=True,
+            save_debug_overlay=True,
+            output_folder=str(tmp_path),
+        )
+        assert (tmp_path / "msr_debug_overlay.png").exists()
+
+    def test_subfolder_by_layout(self, cropper, contact_sheet, tmp_path):
+        cropper.crop_panels(
+            contact_sheet,
+            save_to_disk=True,
+            subfolder_by_layout=True,
+            output_folder=str(tmp_path),
+        )
+        layout_dir = tmp_path / "ideogram_3x3"
+        assert layout_dir.is_dir()
+        for name in PANEL_OUTPUT_NAMES:
+            assert (layout_dir / f"msr_{name}.png").exists()
 
 
 # --- Assembler ----------------------------------------------------------------
@@ -410,7 +436,7 @@ class TestAssembler:
         panels = crops[:5]
         _, status = assembler.assemble(*panels)
         assert isinstance(status, str)
-        assert "Assembled" in status
+        assert "assembled" in status
 
     def test_assemble_with_custom_mapping(self, assembler, cropper, contact_sheet):
         crops = cropper.crop_panels(contact_sheet, save_to_disk=False)
